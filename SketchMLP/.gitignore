@@ -1,0 +1,46 @@
+.vscode/
+.idea/
+*.code-workspace
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs & debug
+logs/
+*.log
+
+# Checkpoints / models
+*.pt
+*.pth
+*.ckpt
+*.npz
+*.npy
+
+# Datasets & large data
+Dataset/
+QuickDraw414k/
+pretrain/
+data/
+*.zip
+
+# Results / figures
+results*/
+*.png
+*.jpg
+*.jpeg
+*.svg
+
+# OS files
+.DS_Store
+Thumbs.db
