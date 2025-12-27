@@ -4,6 +4,9 @@ from hyper_params import hp
 import numpy as np
 import matplotlib.pyplot as plt
 import PIL
+import json
+import os
+from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -173,6 +176,177 @@ class Model:
         self.encoder_optimizer = optim.Adam(self.encoder.parameters(), hp.lr, betas=(0.5,0.999))
         self.decoder_optimizer = optim.Adam(self.decoder.parameters(), hp.lr, betas=(0.5,0.999))
         self.eta_step = hp.eta_min
+        
+        # 添加训练历史记录
+        self.train_history = {
+            'total_loss': [],
+            'reconstruction_loss': [],
+            'rpcl_loss': [],
+            'alpha_loss': [],
+            'gaussian_loss': [],
+            'mse_loss': [],
+            'lr': [],
+            'epoch': []
+        }
+        
+        self.val_history = {
+            'total_loss': [],
+            'reconstruction_loss': [],
+            'rpcl_loss': [],
+            'alpha_loss': [],
+            'gaussian_loss': [],
+            'mse_loss': []
+        }
+
+    def validate(self, val_dataset, epoch):
+        """在验证集上计算损失，不更新模型参数"""
+        self.encoder.eval()
+        self.decoder.eval()
+        
+        total_loss_list = []
+        reconstruction_loss_list = []
+        rpcl_loss_list = []
+        alpha_loss_list = []
+        gaussian_loss_list = []
+        mse_loss_list = []
+        
+        # 验证几个batch（减少计算量）
+        val_batches = min(10, len(val_dataset.sketches) // hp.batch_size)
+        if val_batches == 0:
+            val_batches = 1  # 至少验证一个batch
+        
+        with torch.no_grad():
+            for i in range(val_batches):
+                batch, lengths, graphs, adjs = val_dataset.make_batch(hp.batch_size)
+                
+                if hp.use_cuda:
+                    batch = batch.cuda()
+                    graphs = graphs.cuda()
+                    adjs = adjs.cuda()
+                    # lengths 是列表，不需要移动到CUDA
+                
+                # encode
+                z, mu, sigma, mseloss, rpclloss, update_data = self.encoder(graphs)
+                
+                # decode
+                if hp.use_cuda:
+                    sos = torch.stack([torch.Tensor([0, 0, 1, 0, 0])] * hp.batch_size).cuda().unsqueeze(0)
+                else:
+                    sos = torch.stack([torch.Tensor([0, 0, 1, 0, 0])] * hp.batch_size).unsqueeze(0)
+                batch_init = torch.cat([sos, batch], 0)
+                z_stack = torch.stack([z] * (hp.Nmax + 1))
+                inputs = torch.cat([batch_init, z_stack], 2)
+                
+                pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q, _, _ = self.decoder(inputs, z)
+                
+                # 计算损失
+                mask, dx, dy, p = self.make_target(batch, lengths)
+                LR = self.reconstruction_loss(mask, dx, dy, p, epoch)
+                
+                # 计算总损失（注意：验证时不更新eta_step和assign）
+                eta_step_val = 1.0 - 0.999 * (0.9999 ** (max(0, epoch - hp.br))) if epoch >= hp.br else 0
+                val_loss = LR + rpclloss[0] * eta_step_val + 0.5 * mseloss
+                
+                # 记录各项损失
+                total_loss_list.append(val_loss.item())
+                reconstruction_loss_list.append(LR.item())
+                rpcl_loss_list.append(rpclloss[0].item())
+                alpha_loss_list.append(rpclloss[1].item())
+                gaussian_loss_list.append(rpclloss[2].item())
+                mse_loss_list.append(mseloss.item())
+        
+        # 返回平均值
+        return {
+            'total_loss': np.mean(total_loss_list),
+            'reconstruction_loss': np.mean(reconstruction_loss_list),
+            'rpcl_loss': np.mean(rpcl_loss_list),
+            'alpha_loss': np.mean(alpha_loss_list),
+            'gaussian_loss': np.mean(gaussian_loss_list),
+            'mse_loss': np.mean(mse_loss_list)
+        }
+
+    def save_training_history(self):
+        """保存训练历史到文件"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        history_file = os.path.join(hp.model_save, f'training_history_{timestamp}.json')
+        
+        history_data = {
+            'train_history': self.train_history,
+            'val_history': self.val_history,
+            'hyperparameters': {
+                'lr': hp.lr,
+                'batch_size': hp.batch_size,
+                'Nz': hp.Nz,
+                'br': hp.br,
+                'eta_min': hp.eta_min
+            }
+        }
+        
+        with open(history_file, 'w') as f:
+            json.dump(history_data, f, indent=2)
+        
+        print(f"训练历史已保存到: {history_file}")
+
+    def plot_training_curves(self):
+        """绘制训练曲线"""
+        if not self.train_history['epoch']:  # 如果没有训练数据，不绘图
+            return
+            
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+        fig.suptitle('Training and Validation Curves', fontsize=16)
+        
+        # 1. Total Loss
+        axes[0,0].plot(self.train_history['epoch'], self.train_history['total_loss'], 'b-', label='Train', linewidth=2)
+        if self.val_history['total_loss']:
+            val_epochs = [e for e in self.train_history['epoch'] if e % 50 == 0]  # 假设每100个epoch验证一次
+            if len(val_epochs) == len(self.val_history['total_loss']):
+                axes[0,0].plot(val_epochs, self.val_history['total_loss'], 'r-', label='Val', linewidth=2)
+        axes[0,0].set_title('Total Loss')
+        axes[0,0].set_xlabel('Epoch')
+        axes[0,0].set_ylabel('Loss')
+        axes[0,0].legend()
+        axes[0,0].grid(True, alpha=0.3)
+        
+        # 2. Reconstruction Loss
+        axes[0,1].plot(self.train_history['epoch'], self.train_history['reconstruction_loss'], 'b-', label='Train', linewidth=2)
+        if self.val_history['reconstruction_loss']:
+            if len(val_epochs) == len(self.val_history['reconstruction_loss']):
+                axes[0,1].plot(val_epochs, self.val_history['reconstruction_loss'], 'r-', label='Val', linewidth=2)
+        axes[0,1].set_title('Reconstruction Loss')
+        axes[0,1].set_xlabel('Epoch')
+        axes[0,1].set_ylabel('Loss')
+        axes[0,1].legend()
+        axes[0,1].grid(True, alpha=0.3)
+        
+        # 3. RPCL Loss
+        axes[1,0].plot(self.train_history['epoch'], self.train_history['rpcl_loss'], 'b-', label='Train', linewidth=2)
+        if self.val_history['rpcl_loss']:
+            if len(val_epochs) == len(self.val_history['rpcl_loss']):
+                axes[1,0].plot(val_epochs, self.val_history['rpcl_loss'], 'r-', label='Val', linewidth=2)
+        axes[1,0].set_title('RPCL Loss')
+        axes[1,0].set_xlabel('Epoch')
+        axes[1,0].set_ylabel('Loss')
+        axes[1,0].legend()
+        axes[1,0].grid(True, alpha=0.3)
+        
+        # 4. MSE Loss
+        axes[1,1].plot(self.train_history['epoch'], self.train_history['mse_loss'], 'b-', label='Train', linewidth=2)
+        if self.val_history['mse_loss']:
+            if len(val_epochs) == len(self.val_history['mse_loss']):
+                axes[1,1].plot(val_epochs, self.val_history['mse_loss'], 'r-', label='Val', linewidth=2)
+        axes[1,1].set_title('MSE Loss')
+        axes[1,1].set_xlabel('Epoch')
+        axes[1,1].set_ylabel('Loss')
+        axes[1,1].legend()
+        axes[1,1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        # 保存图片
+        plot_file = os.path.join(hp.model_save, f'training_curves_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png')
+        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+        print(f"训练曲线已保存到: {plot_file}")
+        plt.show()
 
     def lr_decay(self, optimizer: optim):
         """Decay learning rate by a factor of lr_decay"""
@@ -206,7 +380,7 @@ class Model:
         p = torch.stack([p1, p2, p3], 2)  # torch.Size([130, 100, 3])
         return mask, dx, dy, p
 
-    def train(self, epoch):
+    def train(self, epoch, val_dataset=None):
         self.encoder.train()
         self.decoder.train()
 
@@ -222,7 +396,7 @@ class Model:
 
         # torch.Size([100, 128]) torch.Size([100, 128]) torch.Size([100, 128])
         # print(z.shape, self.mu.shape, self.sigma.shape)
-
+  
         # create start of sequence:
         if hp.use_cuda:
             sos = torch.stack([torch.Tensor([0, 0, 1, 0, 0])] * hp.batch_size).cuda().unsqueeze(0)
@@ -274,15 +448,56 @@ class Model:
         if epoch % 1 == 0:
             # print('epoch', epoch, 'loss', loss.item(), 'LR', LR.item(), 'LKL', LKL.item())
             print('gcn, epoch -> ', epoch, 'loss', loss.item(), 'LR', LR.item(),'mse:',mseloss.item()
-                  ,' rpcl', rpclloss[0].item(),"alpha_loss",rpclloss[1].item(),"gaussian_loss",rpclloss[2].item())
+                  ,' rpcl', rpclloss[0].item(),"alpha_loss",rpclloss[1].item(),"gaussian_loss",rpclloss[2].item(), "eta_step", self.eta_step)
+            
+            # 记录训练历史
+            self.train_history['epoch'].append(epoch)
+            self.train_history['total_loss'].append(loss.item())
+            self.train_history['reconstruction_loss'].append(LR.item())
+            self.train_history['rpcl_loss'].append(rpclloss[0].item())
+            self.train_history['alpha_loss'].append(rpclloss[1].item())
+            self.train_history['gaussian_loss'].append(rpclloss[2].item())
+            self.train_history['mse_loss'].append(mseloss.item())
+            self.train_history['lr'].append(self.encoder_optimizer.param_groups[0]['lr'])
+            
             self.encoder_optimizer = self.lr_decay(self.encoder_optimizer)  # modify optimizer after one step.
             self.decoder_optimizer = self.lr_decay(self.decoder_optimizer)
+        
+        # 验证过程：每100个epoch验证一次
+        if epoch % 50 == 0 and epoch > 0 and val_dataset is not None:
+            print(f"\n--- 在验证集上评估 epoch {epoch} ---")
+            val_losses = self.validate(val_dataset, epoch)
+            
+            # 记录验证历史
+            self.val_history['total_loss'].append(val_losses['total_loss'])
+            self.val_history['reconstruction_loss'].append(val_losses['reconstruction_loss'])
+            self.val_history['rpcl_loss'].append(val_losses['rpcl_loss'])
+            self.val_history['alpha_loss'].append(val_losses['alpha_loss'])
+            self.val_history['gaussian_loss'].append(val_losses['gaussian_loss'])
+            self.val_history['mse_loss'].append(val_losses['mse_loss'])
+            
+            print(f"验证集 - Total Loss: {val_losses['total_loss']:.4f}, "
+                  f"Reconstruction Loss: {val_losses['reconstruction_loss']:.4f}, "
+                  f"RPCL Loss: {val_losses['rpcl_loss']:.4f}, "
+                  f"MSE Loss: {val_losses['mse_loss']:.4f}")
+            print("--- 验证完成 ---\n")
+            
+            # 切换回训练模式
+            self.encoder.train()
+            self.decoder.train()
+        
         if epoch == 0:
             return
         if epoch % 500 == 0:
             self.conditional_generation(epoch)
         if epoch % 1000 == 0:
             self.save(epoch)
+            # 保存GMM参数
+            self.save_gmm_parameters(epoch)
+            # 定期保存训练历史和绘图
+            if epoch > 0:
+                self.save_training_history()
+                self.plot_training_curves()
 
     def bivariate_normal_pdf(self, dx, dy):
         z_x = ((dx - self.mu_x) / self.sigma_x) ** 2
@@ -316,6 +531,106 @@ class Model:
                    f'{hp.model_save}/encoderRNN_epoch_{epoch}.pth')
         torch.save(self.decoder.state_dict(), \
                    f'{hp.model_save}/decoderRNN_epoch_{epoch}.pth')
+
+    def save_gmm_parameters(self, epoch):
+        """
+        保存encoder中所有GMM参数（共k组GMM）
+        
+        保存的参数包括：
+        - de_mu: GMM均值参数，形状 (k, z_size)
+        - de_sigma2: GMM方差参数，形状 (k, z_size)  
+        - de_alpha: GMM混合权重，形状 (k, 1)
+        - k: GMM组件数量
+        - z_size: 隐空间维度
+        """
+        import numpy as np
+        import os
+        
+        print(f"\n{'='*60}")
+        print(f"保存GMM参数 - epoch {epoch}")
+        print(f"{'='*60}")
+        
+        # 获取GMM参数
+        k = self.encoder.k  # GMM组件数量
+        z_size = self.encoder.z_size  # 隐空间维度
+        
+        # 提取参数数据
+        de_mu = self.encoder.de_mu.data.cpu().numpy()  # (k, z_size)
+        de_sigma2 = self.encoder.de_sigma2.data.cpu().numpy()  # (k, z_size)
+        de_alpha = self.encoder.de_alpha.data.cpu().numpy()  # (k, 1)
+        
+        print(f"GMM组件数量 (k): {k}")
+        print(f"隐空间维度 (z_size): {z_size}")
+        print(f"de_mu 形状: {de_mu.shape}")
+        print(f"de_sigma2 形状: {de_sigma2.shape}")
+        print(f"de_alpha 形状: {de_alpha.shape}")
+        
+        # 创建保存目录
+        gmm_save_dir = f'{hp.model_save}/gmm_parameters'
+        os.makedirs(gmm_save_dir, exist_ok=True)
+        
+        # 保存为NPZ格式（包含所有GMM参数）
+        gmm_file = f'{gmm_save_dir}/gmm_parameters_epoch_{epoch}.npz'
+        np.savez(gmm_file, 
+                 de_mu=de_mu,
+                 de_sigma2=de_sigma2,
+                 de_alpha=de_alpha,
+                 k=k,
+                 z_size=z_size,
+                 epoch=epoch)
+        
+        print(f"✓ GMM参数已保存到: {gmm_file}")
+        
+        # 额外保存为单独的numpy文件以便分析
+        # 保存每个GMM组件的参数
+        for i in range(k):
+            component_file = f'{gmm_save_dir}/gmm_component_{i}_epoch_{epoch}.npz'
+            np.savez(component_file,
+                     mu=de_mu[i],  # (z_size,)
+                     sigma2=de_sigma2[i],  # (z_size,)
+                     alpha=de_alpha[i, 0],  # scalar
+                     component_id=i,
+                     epoch=epoch)
+        
+        print(f"✓ 各GMM组件参数已分别保存到: {gmm_save_dir}/gmm_component_*_epoch_{epoch}.npz")
+        
+        # 保存GMM参数的统计信息
+        stats = {
+            'mu_mean': float(np.mean(de_mu)),
+            'mu_std': float(np.std(de_mu)),
+            'mu_min': float(np.min(de_mu)),
+            'mu_max': float(np.max(de_mu)),
+            'sigma2_mean': float(np.mean(de_sigma2)),
+            'sigma2_std': float(np.std(de_sigma2)),
+            'sigma2_min': float(np.min(de_sigma2)),
+            'sigma2_max': float(np.max(de_sigma2)),
+            'alpha_mean': float(np.mean(de_alpha)),
+            'alpha_std': float(np.std(de_alpha)),
+            'alpha_min': float(np.min(de_alpha)),
+            'alpha_max': float(np.max(de_alpha)),
+            'alpha_sum': float(np.sum(de_alpha)),
+            'dominant_components': [int(x) for x in np.argsort(de_alpha.flatten())[-5:][::-1]],  # top 5 components by weight
+            'epoch': epoch,
+            'k': k,
+            'z_size': z_size
+        }
+        
+        stats_file = f'{gmm_save_dir}/gmm_statistics_epoch_{epoch}.json'
+        import json
+        with open(stats_file, 'w') as f:
+            json.dump(stats, f, indent=2)
+        
+        print(f"✓ GMM统计信息已保存到: {stats_file}")
+        
+        # 打印一些关键统计信息
+        print(f"\nGMM参数统计:")
+        print(f"  mu范围: [{stats['mu_min']:.4f}, {stats['mu_max']:.4f}], 均值: {stats['mu_mean']:.4f}, 标准差: {stats['mu_std']:.4f}")
+        print(f"  sigma2范围: [{stats['sigma2_min']:.4f}, {stats['sigma2_max']:.4f}], 均值: {stats['sigma2_mean']:.4f}, 标准差: {stats['sigma2_std']:.4f}")
+        print(f"  alpha范围: [{stats['alpha_min']:.4f}, {stats['alpha_max']:.4f}], 均值: {stats['alpha_mean']:.4f}, 标准差: {stats['alpha_std']:.4f}")
+        print(f"  alpha总和: {stats['alpha_sum']:.4f}")
+        print(f"  权重最高的5个组件: {stats['dominant_components']}")
+        
+        print(f"{'='*60}")
 
     def load(self, encoder_name, decoder_name):
         saved_encoder = torch.load(encoder_name)
@@ -357,7 +672,7 @@ class Model:
                 break
         # visualize result:
         x_sample = np.cumsum(seq_x, 0)
-        y_sample = np.cumsum(seq_y, 0)
+        y_sample = np.cumsum(seq_y, 0) 
         z_sample = np.array(seq_z)
         sequence = np.stack([x_sample, y_sample, z_sample]).T
         make_image(sequence, epoch)
@@ -415,17 +730,28 @@ if __name__ == "__main__":
                 f'{hp.model_save}/decoderRNN_epoch_{epoch_load}.pth')
     model.encoder_optimizer = optim.Adam(model.encoder.parameters(), hp.lr)
     model.decoder_optimizer = optim.Adam(model.decoder.parameters(), hp.lr)
+    
+    # 创建验证集数据加载器
+    print("正在加载验证集...")
+    val_dataset = SketchesDataset(hp.data_location, hp.category, "valid")
+    print(f"验证集加载完成，共{len(val_dataset.sketches)}个样本")
        
-    for epoch in range(20001):
-        if epoch <= epoch_load:
+    for epoch in range(52001):
+        if epoch <= epoch_load:  
             model.lr_decay(model.encoder_optimizer)
             model.lr_decay(model.decoder_optimizer)
             continue
         #if epoch_load:
             #model.load(f'./{hp.model_save}/encoderRNN_epoch_{epoch_load}.pth',
-                       #f'./{hp.model_save}/decoderRNN_epoch_{epoch_load}.pth')
+                       #f'./{hp.model_save}/deco  derRNN_epoch_{epoch_load}.pth')
         #print(model.encoder.de_alpha)
-        model.train(epoch)
+        model.train(epoch, val_dataset)
+    
+    # 训练完成后保存最终的历史记录和绘图
+    print("\n训练完成，正在保存训练历史和绘图...")
+    model.save_training_history()
+    model.plot_training_curves()
+    print("所有任务完成！")
 
     '''
                                            

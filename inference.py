@@ -243,13 +243,15 @@ class Model:
             
             if total_samples <= samples_per_category:
                 # 如果样本数少于要求，测试全部样本
-                test_indices = list(range(start_idx, end_idx))
+                test_indices = [np.int64(i) for i in range(start_idx, end_idx)]
+                # print(test_indices)
             else:
                 # 随机选择指定数量的样本
-                import numpy as np
+                # import numpy as np 
                 test_indices = np.random.choice(range(start_idx, end_idx), 
                                               size=sample_count, 
                                               replace=False)
+                # print(test_indices)
             
             print(f"类别{category_name}共有{total_samples}个样本，测试{len(test_indices)}个")
             
@@ -259,6 +261,7 @@ class Model:
             
             # 测试选定的样本
             for idx, sketch_index in enumerate(test_indices):
+                # print(sketch_index, type(sketch_index))
                 if idx % 5 == 0:  # 每5个样本打印一次进度
                     print(f"  进度: {idx+1}/{len(test_indices)}")
                 
@@ -320,7 +323,7 @@ class Model:
                     ret_z_list.append(ret_mu.detach().cpu().numpy())
                     
                     # 5. 可视化生成结果（只可视化前5个，节省空间）
-                    if idx < 5:  # 每类只可视化前5个结果
+                    if idx < 20:  # 每类只可视化前5个结果
                         x_sample = np.cumsum(seq_x, 0)
                         y_sample = np.cumsum(seq_y, 0)
                         z_sample = np.array(seq_z)
@@ -494,6 +497,162 @@ class Model:
                                                                       
                       
 
+    def save_z(self, sketch_dataset, save_middle_path="batch_z_results", batch_size = 50):
+        """
+        批量化计算并保存result_z和ret_z
+        对所有样本进行编码和重建，比validate_simple更快
+        
+        Args:
+            sketch_dataset: 数据集
+            save_middle_path: 保存路径
+        """
+        print(f"\n{'='*60}")
+        print("批量化保存隐空间向量")
+        print(f"{'='*60}")
+        
+        self.encoder.eval()
+        self.decoder.eval()
+        
+        batch_size = batch_size  # 批处理大小
+        total_samples = len(sketch_dataset.sketches)
+        
+        print(f"总样本数: {total_samples}")
+        print(f"批处理大小: {batch_size}")
+        
+        with torch.no_grad():
+            # 遍历每个类别
+            for cat_idx, category_file in enumerate(sketch_dataset.category):
+                category_name = category_file.split(".")[0]
+                print(f"\n处理类别: {category_name}")
+                
+                # 获取该类别的样本范围
+                if cat_idx == 0:
+                    start_idx = 0
+                else:
+                    start_idx = sum(sketch_dataset.sketches_categroy_count[:cat_idx])
+                end_idx = start_idx + sketch_dataset.sketches_categroy_count[cat_idx]
+                
+                category_count = sketch_dataset.sketches_categroy_count[cat_idx]
+                print(f"  样本范围: {start_idx} - {end_idx-1} (共{category_count}个)")
+                
+                # 存储结果
+                result_z_list = []  # 原始z
+                ret_z_list = []     # 重建z
+                
+                # 批处理处理该类别所有样本
+                for i in range(0, category_count, batch_size):
+                    batch_end = min(i + batch_size, category_count)
+                    batch_indices = list(range(start_idx + i, start_idx + batch_end))
+                    
+                    if i % 100 == 0:
+                        print(f"  进度: {i}/{category_count}")
+                    
+                    try:
+                        # 批量获取数据
+                        batch_data = []
+                        lengths_list = []
+                        graphs_list = []
+                        adjs_list = []
+                        
+                        for idx in batch_indices:
+                            batch, lengths, graphs, adjs = sketch_dataset.get_sample(idx)
+                            batch_data.append(batch)
+                            lengths_list.append(lengths)
+                            graphs_list.append(graphs)
+                            adjs_list.append(adjs)
+                        
+                        # 拼接批次数据
+                        if hp.use_cuda:
+                            batch_tensor = torch.cat(batch_data, dim=1).cuda()  # (Nmax, batch_size, 5)
+                            graphs_tensor = torch.cat(graphs_list, dim=0).cuda()  # (batch_size, ...)
+                        else:
+                            batch_tensor = torch.cat(batch_data, dim=1)  # (Nmax, batch_size, 5)
+                            graphs_tensor = torch.cat(graphs_list, dim=0)  # (batch_size, ...)
+                        
+                        # 批量编码
+                        z_batch, mu_batch, sigma_batch, _, _, _ = self.encoder(graphs_tensor)
+                        
+                        # 存储原始z (使用mu而不是z，与validate_simple一致)
+                        result_z_list.extend(mu_batch.cpu().numpy())
+                        
+                        # 批量生成和重编码
+                        batch_ret_z = []
+                        for j in range(mu_batch.shape[0]):
+                            # 生成新草图
+                            z_single = mu_batch[j:j+1]  # (1, 128)
+                            if hp.use_cuda:
+                                z_single = z_single.cuda()
+                            
+                            # 生成序列
+                            seq_x, seq_y, seq_z = [], [], []
+                            hidden_cell = None
+                            sos = torch.Tensor([0, 0, 1, 0, 0]).view(1, 1, -1)
+                            if hp.use_cuda:
+                                sos = sos.cuda()
+                            s = sos
+                            
+                            for step in range(hp.Nmax):
+                                _input = torch.cat([s, z_single.unsqueeze(0)], 2)
+                                self.pi, self.mu_x, self.mu_y, \
+                                self.sigma_x, self.sigma_y, \
+                                self.rho_xy, self.q, hidden, cell = \
+                                    self.decoder(_input, z_single, hidden_cell)
+                                hidden_cell = (hidden, cell)
+                                s, dx, dy, pen_down, eos = self.sample_next_state()
+                                
+                                seq_x.append(dx)
+                                seq_y.append(dy)
+                                seq_z.append(pen_down)
+                                if eos:
+                                    break
+                            
+                            # 重建序列
+                            ret_seq_x = np.asarray(seq_x)
+                            ret_seq_y = np.asarray(seq_y)
+                            ret_seq_z = np.asarray(seq_z)
+                            ret_sequence = np.stack([ret_seq_x, ret_seq_y, ret_seq_z]).T
+                            
+                            # 重编码
+                            _graph_tensor, _ = make_graph_(ret_sequence, 
+                                                         graph_num=hp.graph_number,
+                                                         graph_picture_size=hp.graph_picture_size,
+                                                         mask_prob=0.0)
+                            
+                            if hp.use_cuda:
+                                _, ret_mu, _, _, _, _ = self.encoder(_graph_tensor.cuda().unsqueeze(0))
+                            else:
+                                _, ret_mu, _, _, _, _ = self.encoder(_graph_tensor.unsqueeze(0))
+                            
+                            batch_ret_z.append(ret_mu.cpu().numpy())
+                        
+                        ret_z_list.extend(batch_ret_z)
+                        
+                    except Exception as e:
+                        print(f"  批处理 {i}-{batch_end-1} 时出错: {e}")
+                        continue
+                
+                # 保存该类别的结果
+                print(f"  保存类别 {category_name} 结果...")
+                os.makedirs(f"{save_middle_path}/npz", exist_ok=True)
+                os.makedirs(f"{save_middle_path}/retnpz", exist_ok=True)
+                
+                # 保存原始z
+                result_z_array = np.array(result_z_list)
+                np.savez(f"{save_middle_path}/npz/{category_name}.npz", z=result_z_array)
+                print(f"  ✓ 保存原始z: {save_middle_path}/npz/{category_name}.npz (形状: {result_z_array.shape})")
+                
+                # 保存重建z
+                ret_z_array = np.array(ret_z_list)
+                np.savez(f"{save_middle_path}/retnpz/{category_name}.npz", z=ret_z_array)
+                print(f"  ✓ 保存重建z: {save_middle_path}/retnpz/{category_name}.npz (形状: {ret_z_array.shape})")
+                
+                print(f"  类别 {category_name} 处理完成")
+        
+        print(f"\n{'='*60}")
+        print("批量化保存完成！")
+        print(f"{'='*60}")
+
+
     def conditional_generate_by_z(self, z, index=-1, plt_show=False):  #
         self.encoder.eval()
         self.decoder.eval()
@@ -587,7 +746,7 @@ if __name__ == "__main__":
     hp.mask_prob = 0.0
     sketch_dataset = SketchesDataset(hp.data_location, hp.category, "test")
     hp.Nmax = sketch_dataset.Nmax
-    hp.Nmax = 177
+    # hp.Nmax = 177
     hp.temperature = 0.01
     # hp.Nmax = 151 for v2_1
     # hp.Nmax = 177 for masked
@@ -598,18 +757,33 @@ if __name__ == "__main__":
     #            "./model_save_v2_1/decoderRNN_epoch_99000.pth")
     #model.load(f"./{hp.model_save}/encoderRNN_epoch_8000_sgy.pth",
     #           f"./{hp.model_save}/decoderRNN_epoch_8000_sgy.pth")
-    model.load(f"{hp.model_save}/encoderRNN_epoch_20000.pth",
-               f"{hp.model_save}/decoderRNN_epoch_20000.pth")
+    model.load(f"{hp.model_save}/encoderRNN_epoch_3000.pth",
+               f"{hp.model_save}/decoderRNN_epoch_3000.pth")
 
     print(hp.mask_prob, hp.Nmax)
-    # model.validate(sketch_dataset, save_middle_path=f"results/{hp.mask_prob}")
-    model.validate_simple(sketch_dataset,
-                       save_middle_path="validate_simple_results",
-                       samples_per_category=20)
+    
+    # 选择运行模式
+    mode = "batch_z"  # 可以是 "validate_simple" 或 "batch_z"
+    # test_samples = 20  # 测试样本数量
+    
+    if mode == "validate_simple":
+        # 原始逐个样本处理（慢）
+        print("运行原始validate_simple模式...")
+        model.validate_simple(sketch_dataset,
+                           save_middle_path="validate_simple_results",
+                           samples_per_category=300)  # 少量样本测试
+    elif mode == "batch_z":
+        # 新的批量化处理（快）
+        print("运行新的批量化save_z模式...")
+        # 只处理少量样本进行测试
+        # hp.category = ["airplane.npz"]  # 只用1个类别测试
+        test_dataset = SketchesDataset(hp.data_location, hp.category, "test")
+        model.save_z(test_dataset, save_middle_path="batch_z_results", batch_size=100)
+    
     exit(0)
                          
                                        
-'''
+''' 
     # generate images by z or mu
     root_path = f"result/visualize2/146000/{hp.mask_prob}"
     for each_npz_path in glob.glob(f"./{root_path}/npz/*.npz"):

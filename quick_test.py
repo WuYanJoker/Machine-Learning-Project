@@ -42,7 +42,10 @@ def test_model_components():
     
     # 测试编码器
     encoder = myencoder(hps=hp)
+    encoder = encoder.cpu()  # 确保在CPU上
     encoder.eval()  # 设置为评估模式
+    graphs = graphs.cpu()  # 确保数据在CPU上
+    adjs = adjs.cpu()
     z, mu, sigma, mseloss, rpclloss, update_data = encoder(graphs)
     
     print(f"编码器输出形状: z={z.shape}, mu={mu.shape}, sigma={sigma.shape}")

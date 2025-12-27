@@ -15,7 +15,7 @@ class DecoderRNN(nn.Module):
         # create proba distribution parameters from hiddens:
         self.fc_params = nn.Linear(hp.dec_hidden_size, 6 * hp.M + 3)  # (512, 6 * 20 + 3)
 
-    def   forward(self, inputs, z, hidden_cell=None):
+    def forward(self, inputs, z, hidden_cell=None):
         if hidden_cell is None:
             # then we must init from z
             # print(z, z.shape)  # [100, 128], [batch_size, Nz]
