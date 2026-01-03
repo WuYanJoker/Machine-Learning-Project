@@ -71,20 +71,20 @@ def draw_canvas(model, latents, grid=GRID, pad=PAD):
     return canvas
 
 def main():
-    if len(sys.argv) != 5:
-        print("用法: python map_sketch.py 类别1 类别2 类别3 类别4")
-        sys.exit(1)
-    c1, c2, c3, c4 = sys.argv[1:5]
+    # if len(sys.argv) != 5:
+    #     print("用法: python map_sketch.py 类别1 类别2 类别3 类别4")
+    #     sys.exit(1)
+    c1, c2, c3, c4 = "airplane", "bus", "fish", "umbrella"
 
     # 自动定位数据集目录
-    data_root = "/home/sda/jbx2/CS3308/validate_simple_results_ek34_1225/npz/"
+    data_root = "/home/sda/jbx2/CS3308/validate_simple_results_ek20_1227/npz/"
     out_file  = f"map_{c1}_{c2}_{c3}_{c4}.png"
 
     corners = load_four_corners(data_root, c1, c2, c3, c4)
     z11, z21, z12, z22 = corners
     latents = bilinear_grid(z11, z21, z12, z22, GRID)
 
-    model = load_model(dir_path = "/home/sda/jbx2/CS3308/1024Rpcl/model_save_ek34_1225/")
+    model = load_model(dir_path = "/home/sda/jbx2/CS3308/1024Rpcl/model_save_ek20_1227/")
     canvas = draw_canvas(model, latents)
     cv2.imwrite(os.path.join("1024Rpcl", out_file), canvas)
     print(f"2D 草图阵列已保存 → 1024Rpcl/{out_file}")

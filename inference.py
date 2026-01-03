@@ -225,6 +225,9 @@ class Model:
         
         # 遍历每个类别
         for cat_idx, category_file in enumerate(sketch_dataset.category):
+
+            generated_sketches = []  # 收集所有生成的草图序列
+
             category_name = category_file.split(".")[0]
             category_count = sketch_dataset.sketches_categroy_count[cat_idx]
             
@@ -332,12 +335,44 @@ class Model:
                         # 生成重建图像
                         try:
                             _sketch = np.stack([seq_x, seq_y, seq_z]).T
+                            generated_sketches.append(_sketch)
                             reconstructed_cv = draw_three(_sketch, img_size=256)
+
+                            # # 生成渐变成完整图像的图片序列
+                            # if idx < 5:
+                            #     # reconstructed_sequence = []
+                            #     # print(len(seq_x))
+                            #     for i in range(1, len(seq_x)):
+                            #         sx = seq_x[0: i + 1]
+                            #         sy = seq_y[0: i + 1]
+                            #         sz = seq_z[0: i + 1]
+                            #         sk = np.stack([sx, sy, sz]).T
+                            #         # print(sk.size())
+                            #         cv = draw_three(sk, img_size=256)
+                            #         # reconstructed_sequence.append(cv)
+                            #         # 渲染成图片
+                                    
+                            #         if cv is None or cv.size == 0:
+                            #             print(f"  警告: 第{i+1}个渲染失败")
+                            #             continue
+                                    
+                            #         # 保存图片
+                            #         filename = f"sketch_{category_name}_{idx}_{i:03d}.png"
+                            #         save_path = os.path.join(save_middle_path, filename)
+                            #         cv2.imwrite(save_path, cv)
+
                             
                             # 获取原始草图进行对比
                             try:
                                 original_seq = sketch_dataset.sketches_normed[sketch_index]
                                 original_cv = draw_three(original_seq, img_size=256)
+                                
+                                # 保存重建后的草图
+                                recon_save_dir = f"{save_middle_path}/reconstructed/{category_name}"
+                                os.makedirs(recon_save_dir, exist_ok=True)
+                                recon_path = f"{recon_save_dir}/{idx:03d}.png"
+                                cv2.imwrite(recon_path, reconstructed_cv)
+                                print(f"  重建草图已保存: {recon_path}")
                                 
                                 # 创建并排对比图
                                 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
@@ -381,6 +416,8 @@ class Model:
             all_result_z_list.extend(result_z_list)
             all_ret_z_list.extend(ret_z_list)
             
+            np.savez(os.path.join(save_middle_path, f'{category_name}_sketches.npz'), sketches=np.array(generated_sketches, dtype=object))
+
             # 保存隐向量数据
             if len(result_z_list) > 0:
                 os.makedirs(f"{save_middle_path}/npz", exist_ok=True)
@@ -397,6 +434,8 @@ class Model:
         print(f"总计处理了{len(sketch_dataset.category)}个类别")
         print(f"每类测试{samples_per_category}个样本")
         print(f"结果保存在: {save_middle_path}")
+        
+        
         
         return all_result_z_list, all_ret_z_list
 
@@ -757,13 +796,13 @@ if __name__ == "__main__":
     #            "./model_save_v2_1/decoderRNN_epoch_99000.pth")
     #model.load(f"./{hp.model_save}/encoderRNN_epoch_8000_sgy.pth",
     #           f"./{hp.model_save}/decoderRNN_epoch_8000_sgy.pth")
-    model.load(f"{hp.model_save}/encoderRNN_epoch_3000.pth",
-               f"{hp.model_save}/decoderRNN_epoch_3000.pth")
+    model.load(f"{hp.model_save}/encoderRNN_epoch_52000.pth",
+               f"{hp.model_save}/decoderRNN_epoch_52000.pth")
 
     print(hp.mask_prob, hp.Nmax)
     
     # 选择运行模式
-    mode = "batch_z"  # 可以是 "validate_simple" 或 "batch_z"
+    mode = "validate_simple"  # 可以是 "validate_simple" 或 "batch_z"
     # test_samples = 20  # 测试样本数量
     
     if mode == "validate_simple":
@@ -771,7 +810,7 @@ if __name__ == "__main__":
         print("运行原始validate_simple模式...")
         model.validate_simple(sketch_dataset,
                            save_middle_path="validate_simple_results",
-                           samples_per_category=300)  # 少量样本测试
+                           samples_per_category=30)  # 少量样本测试
     elif mode == "batch_z":
         # 新的批量化处理（快）
         print("运行新的批量化save_z模式...")

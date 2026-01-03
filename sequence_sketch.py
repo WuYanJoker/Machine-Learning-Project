@@ -544,11 +544,11 @@ def main(category1, category2, data_path = "/home/sda/jbx2/CS3308/validate_simpl
 if __name__ == '__main__':
     # 在主函数中直接设置两个类别变量
     # 你可以在这里修改为你想要的任何两个不同类别
-    category1 = "airplane"  # 第一个类别
-    category2 = "angel"  # 第二个类别
+    category1 = "bus"  # 第一个类别
+    category2 = "umbrella"  # 第二个类别
     
     # 验证类别是否有效
-    data_path = "/home/sda/jbx2/CS3308/validate_simple_results_ek34_1225/npz/"
+    data_path = "/home/sda/jbx2/CS3308/validate_simple_results_ek20_1227/npz/"
     available_categories = []
     npz_files = glob.glob(os.path.join(data_path, "*.npz"))
     for npz_file in npz_files:
@@ -570,4 +570,4 @@ if __name__ == '__main__':
     print(f"选择的类别: {category1} -> {category2}")
     
     # 执行主函数
-    main(category1, category2, num_interpolations=10)
+    main(category1, category2, data_path=data_path, dir_path="/home/sda/jbx2/CS3308/1024Rpcl/model_save_ek20_1227/", num_interpolations=10)

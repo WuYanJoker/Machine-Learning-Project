@@ -27,19 +27,37 @@ pip install -r requirements.txt
 ### 目录结构
 ```
 1024Rpcl/
-├── Pix2Seq.py              # 主训练脚本
-├── inference.py            # 推理和生成脚本
-├── test.py                 # 测试脚本
-├── encoder.py              # RPCL-VAE编码器
-├── decoder.py              # LSTM解码器
-├── hyper_params.py         # 超参数配置
-├── retrieval.py            # 草图检索评估
+├── Pix2Seq.py                    # 主训练脚本
+├── complete_sketch.py            # 草图补全脚本
+├── decoder.py                    # LSTM解码器
+├── encoder.py                    # RPCL-VAE编码器
+├── hyper_params.py               # 超参数配置
+├── inference.py                  # 推理和生成脚本
+├── map_sketch.py                 # 草图阵列生成
+├── retrieval.py                  # 草图检索评估
+├── sequence_sketch.py            # 草图序列生成
+├── tSNE.py                       # t-SNE可视化
+├── tSNE_gmm.py                   # GMM t-SNE可视化
+├── test.py                       # 测试脚本
 ├── utils/
-│   ├── sketch_processing.py        # 草图处理工具
-│   └── inference_sketch_processing.py  # 推理处理工具
-├── requirements.txt        # 依赖包
-└── README.md              # 项目说明
+│   ├── __init__.py                       # 工具包初始化
+│   ├── (seed.npy)                        # 种子，由于文件大小限制没有上传
+│   ├── inference_sketch_processing.py    # 推理处理工具
+│   └── sketch_processing.py              # 草图处理工具
+├── view_results.py               # 结果查看工具
+├── requirements.txt              # 依赖包
+└── README.md                     # 项目说明
 ```
+
+在课程设计复现该项目过程中，相比于原项目增加了测试和可视化代码如下：
+1. complete_sketch.py
+2. map_sketch.py
+3. sequence_sketch.py
+4. tSNE.py
+5. tSNE_gmm.py
+6. view_results.py
+7. inference.py中添加诸多输出和可视化功能
+8. retrieval.py中与前面已修改代码做适配
 
 ## 快速开始
 

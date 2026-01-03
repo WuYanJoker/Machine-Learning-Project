@@ -10,7 +10,7 @@ class HParams:
         #                  "cake.npz", "cat.npz", "clock.npz", "eye.npz", "fish.npz",
         #                  "pig.npz", "sheep.npz", "spider.npz", "The Great Wall of China.npz",
         #                  "umbrella.npz"]
-        self.model_save = "/home/sda/jbx2/CS3308/1024Rpcl/model_save/"
+        self.model_save = "/home/sda/jbx2/CS3308/1024Rpcl/model_save_ek20_1227/"
         self.br = 1000
         self.enc_hidden_size = 256  # encoder LSTM h size
         self.dec_hidden_size = 1024
