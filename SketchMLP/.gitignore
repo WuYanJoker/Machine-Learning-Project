@@ -17,7 +17,7 @@ venv/
 .ipynb_checkpoints/
 
 # Logs & debug
-logs/
+log-tiny/
 *.log
 
 # Checkpoints / models

@@ -224,6 +224,9 @@ class net(nn.Module):
         #                             nn.Linear(512, 2), nn.Softmax())
         self.expert = nn.Sequential(nn.LayerNorm(hp.d_model*2), nn.Linear(hp.d_model*2, 512),nn.GELU(), nn.Dropout(hp.drop_rate),
                                     nn.Linear(512, 2))
+        # 预训练模型结构
+        # self.expert = nn.Sequential(nn.LayerNorm(hp.d_model * 2), nn.Linear(hp.d_model * 2, 256), nn.GELU(), nn.Dropout(hp.drop_rate),
+        #                           nn.Linear(256, 2))
 
     def forward(self, img, seq):
         B = seq.shape[0]

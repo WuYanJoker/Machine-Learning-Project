@@ -12,7 +12,7 @@ import random
 import numpy as np
 from Utils import draw_three, off2abs
 from Hyper_params import hp
-from Data.sketch_util import SketchUtil
+from SketchUtils import SketchUtil
 from PIL import Image
 
 
@@ -373,6 +373,98 @@ def get_dataloader():
     #                                   num_workers=int(hp.nThreads), collate_fn=collate_self)
 
     return dataloader_Train, dataloader_Test, dataloader_Valid
+
+
+class GenerationDataset(data.Dataset):
+
+    """Dataset for generated sketches under Data/generation.
+
+    现在默认读取离线归一化后的 npz：
+    Data/generation/coordinate_files_normalized 下的文件，
+    每个 npz 里有键 'sketches'，值为已经处理好的序列：
+    - x, y ∈ [0, 256] 的绝对坐标
+    - 第三通道为 0/1 的笔触标记
+    - 填充部分为 -1
+    本 Dataset 中不再做 off2abs 或 /256 归一化，只是直接使用。
+    """
+
+    def __init__(self, coordinate_root='Data/generation/coordinate_files_normalized'):
+        self.coordinate_root = coordinate_root
+        self.mode = 'Gen'
+
+        # Loaded npz arrays
+        self._sketch_arrays = []
+        # entries: (array_id, index_in_array, category_name)
+        self._entries = []
+
+        if os.path.isdir(self.coordinate_root):
+            for fname in sorted(os.listdir(self.coordinate_root)):
+                if not fname.endswith('.npz'):
+                    continue
+                file_path = os.path.join(self.coordinate_root, fname)
+                try:
+                    data_npz = np.load(file_path, allow_pickle=True)
+                except Exception:
+                    continue
+                if 'sketches' not in data_npz:
+                    continue
+                sketches = data_npz['sketches']
+                array_id = len(self._sketch_arrays)
+                self._sketch_arrays.append(sketches)
+
+                # use file name (before first underscore) as category name
+                base_name = os.path.splitext(fname)[0]
+                category_name = base_name.split('_')[0]
+
+                for idx in range(len(sketches)):
+                    self._entries.append((array_id, idx, category_name))
+
+        print('Total Generation Sample {}'.format(len(self._entries)))
+
+        self.test_transform = get_ransform('Test')
+
+    def __len__(self):
+        return len(self._entries)
+
+    def __getitem__(self, index):
+        array_id, idx_in_array, category_name = self._entries[index]
+        seq = self._sketch_arrays[array_id][idx_in_array]
+
+        # Ensure numpy float32 array; 当前数据已经是绝对坐标 + 0/1 标记 + -1 填充
+        seq = np.array(seq, dtype=np.float32)
+
+        # 若存在多余通道，仅保留前三个 (x, y, p)
+        if seq.ndim == 2 and seq.shape[1] > 3:
+            seq = seq[:, 0:3]
+
+        # 保险起见：仍然保证长度为 hp.seq_len，并用 -1 进行填充
+        if seq.shape[0] > hp.seq_len:
+            seq = seq[:hp.seq_len]
+        elif seq.shape[0] < hp.seq_len:
+            pad_len = hp.seq_len - seq.shape[0]
+            pad = -np.ones((pad_len, seq.shape[1]), dtype=seq.dtype)
+            seq = np.concatenate([seq, pad], axis=0)
+
+        # 直接使用绝对坐标绘制草图（不再进行 off2abs 或 /256）
+        img = draw_three(seq, stroke_flag=0)
+
+        # 在送入 transform 之前，对 PIL 图像进行灰度反转（黑白颠倒）
+        img_np = np.array(img)
+        img_np = 255 - img_np
+        img = Image.fromarray(img_np.astype('uint8'))
+
+        sketch_img = self.test_transform(img)
+
+        sample = {
+            'sketch_img': sketch_img,
+            'sketch_points': seq.astype('float32'),
+            # dummy label, not used during generation evaluation
+            'sketch_label': -1,
+            'seq_len': hp.seq_len,
+            'source_category': category_name,
+            'sample_idx': index,
+        }
+        return sample
 
 
 def get_ransform(type):

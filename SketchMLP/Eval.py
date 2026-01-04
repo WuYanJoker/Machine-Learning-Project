@@ -36,14 +36,24 @@ else:#multi gpus
     model = torch.nn.DataParallel(model, device_ids=gpus)
 
 
-print('load pretrain model')
-if hp.Dataset=='QuickDraw':
-    model_name = 'QD'
-elif hp.Dataset == 'QuickDraw414k':
-    model_name = 'QD414k'
+# 评估 ckpts-tiny 中所有模型，因此不再加载 pretrain 权重
+ckpt_dir = hp.model_save  # 例如 'ckpts-tiny'
+ckpt_files = sorted([f for f in os.listdir(ckpt_dir) if f.endswith('.pkl')])
+print('found {} checkpoints in {}'.format(len(ckpt_files), ckpt_dir))
 
-checkpoint = torch.load('./pretrain/'+model_name+'.pkl')['net_state_dict']
-model.load_state_dict(checkpoint)
+log_dir = hp.log
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+log_path = os.path.join(log_dir, 'eval_{}_ckpts.txt'.format(hp.model_name))
+
+# print('load pretrain model')
+# if hp.Dataset=='QuickDraw':
+#     model_name = 'QD'
+# elif hp.Dataset == 'QuickDraw414k':
+#     model_name = 'QD414k'
+
+# checkpoint = torch.load('./pretrain/'+model_name+'.pkl')['net_state_dict']
+# model.load_state_dict(checkpoint)
 loss_f = nn.CrossEntropyLoss(label_smoothing=0.1)
 
 class weight_record():
@@ -58,8 +68,6 @@ class weight_record():
 
     def calculate(self):
         self.weight_img_record = self.weight_img_record / self.cat_num
-
-w_r = weight_record()
 
 class trainer:
     def __init__(self, loss_f, model):
@@ -123,4 +131,30 @@ print('''***********- Evaluating -*************''')
 params_total = sum(p.numel() for p in model.parameters())
 print("Number of parameter: %.2fM"%(params_total/1e6))
 Trainer = trainer(loss_f, model)
-Trainer.run(dataloader_Train, dataloader_Valid, dataloader_Test)
+# Trainer.run(dataloader_Train, dataloader_Valid, dataloader_Test)
+
+# 依次评估 ckpt_dir 中的所有 checkpoint，并将结果写入日志文件
+with open(log_path, 'a') as lf:
+    lf.write('\n===== Eval start: {} =====\n'.format(time.strftime('%Y-%m-%d %H:%M:%S')))
+    lf.write('ckpt_name\ttest_loss\terr1\terr5\n')
+
+    for ckpt_name in ckpt_files:
+        ckpt_path = os.path.join(ckpt_dir, ckpt_name)
+        print('\n[Eval] loading checkpoint:', ckpt_path)
+        state = torch.load(ckpt_path)
+        if isinstance(state, dict) and 'net_state_dict' in state:
+            model.load_state_dict(state['net_state_dict'])
+        else:
+            model.load_state_dict(state)
+
+        # 每个模型单独统计一遍权重记录
+        w_r = weight_record()
+
+        test_err1, test_err5, test_loss = Trainer.valid_epoch(dataloader_Test, 0)
+        w_r.calculate()
+
+        log_line = '{}\t{:.4f}\t{:.4f}\t{:.4f}\n'.format(ckpt_name, test_loss, test_err1, test_err5)
+        print('[Eval Result]', log_line.strip())
+        lf.write(log_line)
+
+    lf.write('===== Eval end =====\n')
