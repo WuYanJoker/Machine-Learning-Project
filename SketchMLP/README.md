@@ -36,3 +36,34 @@ The pretrained weights and the corresponding 'Hyper_params.py' files can be acce
 
 # QuickDraw414k
 <img src="results2.png" width="1000" alt="Overview"/>
+
+---
+
+# Additional Scripts in This Repo
+
+This local version of SketchMLP adds several helper scripts for testing and visualization:
+
+- `test_generation.py`
+	- Load a trained SketchMLP model and run quick tests on a small subset of data.
+	- Example:
+		```bash
+		cd SketchMLP
+		python -u test_generation.py
+		```
+
+- `visualize_generation.py`
+	- Visualize model predictions / sketch-related results and save figures (e.g. into `visualization/`).
+	- Example:
+		```bash
+		cd SketchMLP
+		python -u visualize_generation.py
+		```
+
+- `normalize_generation_sequences.py`
+	- Provide utilities to normalize drawing sequences (e.g. scaling, length normalization) before feeding
+		them into the model or when doing post-processing and visualization.
+	- Usually used as an internal tool by other scripts; you can also adapt it for your own preprocessing
+		pipeline if needed.
+
+These scripts do not change the main training / testing pipeline, but make it
+easier to perform quick experiments and visualize results in this project.
