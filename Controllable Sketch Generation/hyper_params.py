@@ -4,14 +4,14 @@ import torch
 class HParams:
     def __init__(self):
         self.data_location = '/home/sda/jbx2/CS3308/1024Rpcl/dataset'#location of  of origin data
-        self.category = ["airplane.npz", "angel.npz", "alarm clock.npz", "apple.npz", "butterfly.npz", "belt.npz", "bus.npz", "cake.npz", "cat.npz", "clock.npz", "eye.npz", "fish.npz"]
+        self.category = ["airplane.npz", "butterfly.npz", "bus.npz", "cake.npz", "fish.npz", "umbrella.npz"]
         # self.category = ["airplane.npz", "angel.npz", "alarm clock.npz", "apple.npz",
         #                  "butterfly.npz", "belt.npz", "bus.npz",
         #                  "cake.npz", "cat.npz", "clock.npz", "eye.npz", "fish.npz",
         #                  "pig.npz", "sheep.npz", "spider.npz", "The Great Wall of China.npz",
         #                  "umbrella.npz"]
-        self.model_save = "/home/sda/jbx2/CS3308/1024Rpcl/model_save/"
-        self.br = 30000 
+        self.model_save = "/home/sda/jbx2/CS3308/1024Rpcl/model_save_ek20_1227/"
+        self.br = 1000
         self.enc_hidden_size = 256  # encoder LSTM h size
         self.dec_hidden_size = 1024
         self.Nz = 128  # encoder output size

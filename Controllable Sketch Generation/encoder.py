@@ -19,7 +19,7 @@ class myencoder(nn.Module):
         super(myencoder, self).__init__()
         self.hps = hps
 
-        self.k = 34
+        self.k = 20
         self.z_size = hp.Nz
 
         self.global_ = nn.Parameter(torch.zeros(1), requires_grad=False)
